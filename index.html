@@ -1,0 +1,392 @@
+<!doctype html>
+<meta charset="UTF8">
+<html>
+  <head>
+    <title>NYC Tree Types</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/nvd3/1.1.15-beta/nv.d3.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/3.5.2/d3.js" charset="utf-8"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nvd3/1.1.15-beta/nv.d3.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/2.1.4/jquery.js"></script>
+    <link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js"></script>
+    <!-- CSS -->
+    <link rel="stylesheet" type="text/css" href="//cdnjs.cloudflare.com/ajax/libs/chosen/1.1.0/chosen.min.css">
+
+    <!-- JS -->
+    <script type="text/javascript" src="//cdnjs.cloudflare.com/ajax/libs/chosen/1.1.0/chosen.jquery.min.js"></script>
+
+
+     <link rel="stylesheet" href="assets/cartodb.css" />
+     <script src="assets/cartodb.js"></script>
+    <style>
+       #chart {
+          height: 200px;
+          width: 100%;
+       }
+       svg {
+         clear: both;
+       }
+       body {
+         padding: 0 10px;
+       }
+       .tab-content {
+          width: 100%;
+       }
+      .pagination {
+          margin: 5px 0 0 0;
+       }
+      .pagination>li>a, .pagination>li>span {
+        position: relative;
+        float: left;
+        padding: 4px 9px;
+        margin-left: -1px;
+        line-height: 1.42857143;
+        color: #337ab7;
+        text-decoration: none;
+        background-color: #fff;
+        border: 1px solid #ddd;
+       }
+      .pagination {
+        margin: 5px 0 0 0;
+        font-size: 12px;
+        padding: 0;
+        float: left;
+       }
+       #map { width: 100%; height:500px;}
+    </style>
+    <script>
+
+    var map;
+    function init() {
+
+      var hash = window.location.hash.substr(1);
+      hash = hash.split(";");
+
+      var initialTree = getWindow("tree", hash);
+      var northEastLat = getWindow("northEastLat", hash) || '';
+      var northEastLon = getWindow("northEastLon", hash);
+      var southWestLat = getWindow("southWestLat", hash);
+      var southWestLon = getWindow("southWestLon", hash);
+
+      // initiate leaflet map
+      map = new L.Map('map', {
+        center: [40.89534867453227,-73.62659454345703],
+        zoom: 12
+      });
+
+      map.on('moveend', function(e) {
+        setWindowBounds(map.getBounds());
+        setWindowZoom(map.getZoom());
+      });
+
+      if (northEastLon && northEastLat && southWestLon && southWestLat) {
+        map.fitBounds([
+          [southWestLat,southWestLon],
+          [northEastLat,northEastLon]
+        ]);
+      }
+
+      L.tileLayer('http://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
+        attribution: 'MapBox'
+      }).addTo(map);
+
+      var layerUrl = 'https://acouch.carto.com/api/v2/viz/7b6accd8-00f9-11e7-9bf4-0e3ff518bd15/viz.json'
+
+      var sublayers = [];
+
+      cartodb.createLayer(map, layerUrl)
+        .addTo(map)
+        .on('done', function(layer) {
+          // change the query for the first layer
+          if (initialTree) {
+            $("h2.tree-type").text(initialTree);
+            stats(initialTree);
+            var subLayerOptions = {
+              sql: "SELECT * FROM table_2015streettreescensus_trees_cut_1 WHERE spc_common = '" + safeTree(initialTree) + "'",
+            }
+          }
+          else {
+            var subLayerOptions = {
+              sql: "SELECT * FROM table_2015streettreescensus_trees_cut_1 ",
+            }
+          }
+
+          var sublayer = layer.getSubLayer(0);
+
+          sublayer.set(subLayerOptions);
+
+          sublayers.push(sublayer);
+        }).on('error', function() {
+          //log the error
+        });
+
+      function updateQuery(tree) {
+        sublayers[0].set({
+          sql: "SELECT * FROM table_2015streettreescensus_trees_cut_1 WHERE spc_common = '" + safeTree(tree) + "'",
+        });
+        $("h2.tree-type").text(tree);
+      }
+      var page = 0;
+      function search() {
+        var sql = cartodb.SQL({ user: 'acouch' });
+         sql.execute("SELECT DISTINCT spc_common FROM table_2015streettreescensus_trees_cut_1 ORDER BY spc_common ASC").done(function(data) {
+            items = [];
+            $.each(data.rows, function(key, value) {
+              items.push(value.spc_common);
+              $('#search-select')
+                .append($("<option></option>")
+                .attr("value",key)
+                .text(value.spc_common));
+            });
+            $("#search-select").trigger("chosen:updated");
+          });
+      }
+      function safeTree(tree) {
+        var split = tree.split("'");
+        var treeQuery = tree;
+        if (split[1]) {
+          treeQuery = split[0] + "''" + split[1] + "''";
+        }
+        return treeQuery;
+      }
+      function stats(tree) {
+        var sql = cartodb.SQL({ user: 'acouch' });
+          sql.execute("SELECT count(spc_common) as count FROM table_2015streettreescensus_trees_cut_1 WHERE spc_common = '" + safeTree(tree) + "'").done(function(data) {
+             treeCount = data.rows[0].count;
+             $("#tree-count").text(treeCount);
+             $(".tree-name").text(tree);
+             sql.execute("SELECT stump_diam as diameter FROM table_2015streettreescensus_trees_cut_1 WHERE spc_common = '" + safeTree(tree) + "'").done(function(data) {
+               var total = 0;
+               var largest = 0;
+               var smallest = 100;
+               $.each(data.rows, function(key, value) {
+                 total = total + value.diameter;
+                 if (value.diameter > largest) {
+                   largest = value.diameter;
+                 }
+                 if (value.diameter < smallest) {
+                   smallest = value.diameter;
+                 }
+               });
+               var avg = total / treeCount;
+               $("#avg-diameter").text(avg);
+               $("#large-diameter").text(largest);
+               $("#small-diameter").text(smallest);
+
+              });
+          });
+      }
+      function graph(page) {
+        var sql = cartodb.SQL({ user: 'acouch' });
+          sql.execute("SELECT spc_common, count(spc_common) as count FROM table_2015streettreescensus_trees_cut_1 group by (spc_common) order by count desc LIMIT 10 OFFSET " + page + "").done(function(data) {
+            var count = [];
+            var spc_common = [];
+            var treeData = [{
+              key: "Number of Trees",
+              values: []
+            }];
+            var values = []
+            for (i in data.rows) {
+              values.push({label: data.rows[i].spc_common, value: data.rows[i].count})
+            }
+            var treeData = [{
+              key: "Number of Trees",
+              values: values
+            }];
+
+            nv.addGraph(function() {
+              var chart = nv.models.discreteBarChart()
+                  .x(function(d) { return d.label })    //Specify the data accessors.
+                  .y(function(d) { return d.value })
+                  .staggerLabels(true)
+                  .tooltips(false)
+                  .showValues(true)
+                  .transitionDuration(350)
+                  ;
+              if (page > 1) {
+                chart.color(['#8ca38b'])
+              }
+              chart.yAxis
+                   .tickFormat(d3.format(',.0f'));
+              chart
+                   .valueFormat(d3.format(',.0f'));
+
+              d3.select('#chart svg')
+                  .datum(treeData)
+                  .call(chart);
+              nv.utils.windowResize(chart.update);
+
+              d3.selectAll("g rect")
+                .on("mouseover", function(d){
+                   updateQuery(d.label);
+                   stats(d.label);
+                   setWindowTree(d.label);
+
+                 })
+                .on("click", function(d){
+                   alert(d.label);
+                 });
+              return chart;
+            });
+         })
+      }
+      function setWindow(str, windowItem) {
+        var hash = window.location.hash.substr(1);
+        hash = hash.split(";");
+        var alreadySet = false;
+        // Replace an existing value of the same kind.
+        $.each(hash, function(i, item) {
+          item = item.split(":");
+          if (item[0] == str) {
+            hash[i] = str + ":" + windowItem;
+            alreadySet = true;
+          }
+        });
+        // Rejoin hash if overridden.
+        if (hash instanceof Array && hash[0] && alreadySet) {
+          hash = hash.join(";");
+        }
+        // Add to existing if hash has items but value doesn't already exist.
+        else if (!alreadySet && hash[0]) {
+          hash = hash.join(";") + ";" + str + ":" + windowItem;
+        }
+        else {
+          hash = str + ":" + windowItem;
+        }
+        window.location.hash = hash;
+      }
+      function setWindowTree(tree) {
+        setWindow("tree", tree);
+      }
+      function setWindowZoom(zoom) {
+        setWindow("zoom", zoom);
+      }
+      function setWindowBounds(bounds) {
+        setWindow("northEastLat", bounds._northEast.lat);
+        setWindow("northEastLon", bounds._northEast.lng);
+        setWindow("southWestLat", bounds._southWest.lat);
+        setWindow("southWestLon", bounds._southWest.lng);
+      }
+
+      function getWindowBounds(hash) {
+        hash = hash.split(";");
+      }
+      function getWindow(str, windowItem) {
+        var item = "";
+        $.each(hash, function(index, value) {
+          value = value.split(":");
+          if (value[0] == str) {
+            item = value[1];
+            return false;
+          }
+        });
+        return item;
+      }
+      function getWindowTree(hash) {
+        getWindow("tree", hash);
+      }
+
+      graph(page);
+      search();
+      $('#tabs').on('shown.bs.tab', function () {
+        $(".chosen-select").chosen();
+        $(".chosen-select").chosen().change(function() {
+          var num = +$(this).val();
+          setWindowTree(items[num]);
+          updateQuery(items[num]);
+          stats(items[num]);
+        });
+      });
+      $("a.next").click(function() {
+        page = page + 10;
+        graph(page);
+      });
+      $("a.prev").click(function() {
+       page = page - 10;
+       graph(page);
+      });
+     }
+    $('#tabs2').tab();
+    </script>
+  </head>
+  <body onload="init()">
+    <div class="container"><div class="row">
+    <h1>Trees of New York City</h1>
+    <div class="well well-sm">
+      Hover over a tree species or use the search to see those trees on the map below.
+    </div>
+    <ul id="tabs" class="nav nav-tabs" data-tabs="tabs">
+        <li class="active"><a href="#population" data-toggle="tab">Graph</a></li>
+        <li><a href="#search" data-toggle="tab">Search</a></li>
+    </ul>
+    <div id="my-tab-content" class="tab-content">
+        <div class="tab-pane" id="search">
+            <div class="container">
+              <div class="row">
+                <br>
+                <p class="lead">
+                Select a tree species:
+                </p>
+                <select class="chosen-select" id="search-select">
+                   <option value=""></option>
+                   <option value="United States">United States</option>
+                </select>
+              </div>
+            </div>
+        </div>
+        <div class="tab-pane active" id="population">
+          <div id="chart-container">
+            <br>
+            <p class="lead">Hover a tree spc_common:</p>
+            <nav>
+              <ul class="pagination">
+                <li>
+                  <a class="prev" href="#" aria-label="Previous">
+                      <span aria-hidden="true">&laquo;</span>
+                    </a>
+                </li>
+                <li>
+                  <a class="next" href="#" aria-label="Next">
+                      <span aria-hidden="true">&raquo;</span>
+                    </a>
+                </li>
+              </ul>
+            </nav>
+            <div id="chart"><svg></svg></div>
+            <br>
+            Number of trees by Species in NYC.
+        </div>
+    </div>
+    <br>
+    <h2 class="tree-type">All Trees</h2>
+    <ul id="tabs" class="nav nav-tabs" data-tabs="tabs">
+        <li class="active"><a href="#map-tab" data-toggle="tab">Map</a></li>
+        <li><a href="#stats" data-toggle="tab">Stats</a></li>
+    </ul>
+    <div class="tab-content">
+        <div class="tab-pane active" id="map-tab">
+          <div id="map"></div>
+        </div>
+        <div class="tab-pane" id="stats">
+          <p>
+          <h4>Total number of <span class="tree-name">tree<span>s</h4>
+          <div id="tree-count">Select a tree.</div>
+          <h4>Average Diameter</h4>
+          <div id="avg-diameter">Select a tree.</div>
+          <h4>Largest Diameter</h4>
+          <div id="large-diameter">Select a tree.</div>
+          <h4>Smallest Diameter</h4>
+          <div id="small-diameter">Select a tree.</div>
+        </div>
+    </div>
+    <h2>About</h2>
+    <div class="well well-sm">
+      The following visualization is built with data provided by the City of New York Open Data Portal. See <a href="https://data.cityofnewyork.us/Environment/2015-Street-Tree-Census-Tree-Data/pi5s-9p35">original data</a>. These tree counts are only on public property and do not include some parks or trees on private land.
+    </div>
+    </div></div>
+
+  <script>
+
+  </script>
+  </body>
+</html>
